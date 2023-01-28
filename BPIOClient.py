@@ -31,8 +31,14 @@ from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProc
 
 from buttplug import Client, WebsocketConnector, ProtocolSpec
 
-async def buzz(ctx: BPIOContext, duration: float = 0.5):
+async def haltbuzz(ctx: BPIOContext):
+    for dev in ctx.client.devices.values():
+        for actuator in dev.actuators:
+            await actuator.command(0)
+        for rotatory_actuator in dev.rotatory_actuators:
+            await rotatory_actuator.command(0, True)
 
+async def buzz(ctx: BPIOContext, duration: float = 0.5, halt_when_finished: bool = True):
     for dev in ctx.client.devices.values():
         for linear_actuator in dev.linear_actuators:
             linear_actuator(duration * 1000, 0.5)
@@ -45,11 +51,12 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5):
 
     await asyncio.sleep(duration)
 
-    for dev in ctx.client.devices.values():
-        for actuator in dev.actuators:
-            await actuator.command(0)
-        for rotatory_actuator in dev.rotatory_actuators:
-            await rotatory_actuator.command(0, True)
+    # Only turn vibrations off if we know this isn't part of a sequence of
+    # different intensity vibrations, to avoid stuttering
+    if halt_when_finished == False:
+        return
+
+    await haltbuzz(ctx)
 
 async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
     try:
@@ -89,6 +96,32 @@ async def bp_trash(ctx: BPIOContext):
 async def bp_location(ctx: BPIOContext):
     await buzz(ctx, 0.5)
 
+async def bp_string(ctx: BPIOContext, mcmd: String):
+    for subcmd in mcmd.split(' '):
+        splitcmd = subcmd.split(',')
+        strength = splitcmd[0]
+        duration = splitcmd[1]
+        if float(strength) == 0.0:
+            await asyncio.sleep(float(duration))
+        else:
+            ctx.strength = float(strength)
+            await buzz(ctx, float(duration), False)
+
+    await haltbuzz(ctx)
+
+# Demonstrate a less trivial vibration pattern using "strength,duration" formatted strings
+async def bp_multistr(ctx: BPIOContext):
+    await bp_string(ctx, "0.1,0.2 0.2,0.2 0.3,0.2 0.4,0.2 0.5,0.2 0.6,0.2 0.7,0.2 0.8,0.2 0.9,0.2 1.0,0.2")
+    await asyncio.sleep(0.5)
+    await bp_string(ctx, "0.1,0.1 0.2,0.1 0.3,0.1 0.4,0.1 0.5,0.1 0.6,0.1 0.7,0.1 0.8,0.1 0.9,0.1 1.0,0.2")
+    await asyncio.sleep(0.5)
+    await bp_string(ctx, "0.1,0.1 0.2,0.1 0.3,0.1 0.4,0.1 0.5,0.1 0.6,0.1 0.7,0.1 0.8,0.1 0.9,0.1 1.0,0.2")
+    await asyncio.sleep(0.5)
+    await bp_string(ctx, "0.1,0.1 0.2,0.1 0.3,0.1 0.4,0.1 0.5,0.1 0.6,0.1 0.7,0.1 0.8,0.1 0.9,0.1 1.0,0.2")
+
+async def bp_deathlink(ctx: BPIOContext):
+    await bp_multistr(ctx)
+
 class BPIOClientCommandProcessor(ClientCommandProcessor):
     ctx: BPIOContext
 
@@ -114,7 +147,7 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
     def _cmd_bptest(self):
         """Test BP"""
         self.output(f"Testing BP")
-        asyncio.create_task(bptest(self.ctx))
+        asyncio.create_task(bp_multistr(self.ctx))
 
 if __name__ == '__main__':
 
@@ -142,27 +175,34 @@ if __name__ == '__main__':
             elif cmd == 'ReceivedItems':
                 start_index = args["index"]
 
-                for item in args['items']:
-                    if item.flags & 0b001:  # progression item
-                        #logger.info(f"Prog")
-                        asyncio.create_task(bp_progression(self))
-                    elif item.flags & 0b010:  # useful item
-                        #logger.info(f"Useful")
-                        asyncio.create_task(bp_useful(self))
-                    elif item.flags & 0b100:  # trap item
-                        #logger.info(f"Trap")
-                        asyncio.create_task(bp_trap(self))
-                    else:  # trash item
-                        #logger.info(f"Trash")
-                        asyncio.create_task(bp_trash(self))
+                if start_index == len(self.items_received):
+                    for item in args["items"]:
+                        if item.flags & 0b001:  # progression item
+                            #logger.info(f"Prog")
+                            asyncio.create_task(bp_progression(self))
+                        elif item.flags & 0b010:  # useful item
+                            #logger.info(f"Useful")
+                            asyncio.create_task(bp_useful(self))
+                        elif item.flags & 0b100:  # trap item
+                            #logger.info(f"Trap")
+                            asyncio.create_task(bp_trap(self))
+                        else:  # trash item
+                            #logger.info(f"Trash")
+                            asyncio.create_task(bp_trash(self))
 
-            #This will clobber your own item buzzing; implement a queue system?
-            #elif cmd == "RoomUpdate":
-            #    if "checked_locations" in args:
-            #        checked = set(args["checked_locations"])
-            #        for location in checked:
-            #            logger.info(f"Location")
-            #            asyncio.create_task(bp_location(self))
+            # These may clobber your own item buzzing; implement a queue system?
+            elif cmd == "RoomUpdate":
+                if "checked_locations" in args:
+                    checked = set(args["checked_locations"])
+                    for location in checked:
+                        logger.info(f"Location")
+                        asyncio.create_task(bp_location(self))
+
+            elif cmd == "Bounced":
+                tags = args.get("tags", [])
+                # we can skip checking "DeathLink" in ctx.tags, as otherwise we wouldn't have been send this
+                if "DeathLink" in tags and self.last_death_link != args["data"]["time"]:
+                    asyncio.create_task(bp_deathlink(self))
 
         def run_gui(self) -> None:
             from kvui import GameManager
