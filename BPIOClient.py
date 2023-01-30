@@ -75,7 +75,6 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
     await ctx.client.start_scanning()
     await asyncio.sleep(5)
     await ctx.client.stop_scanning()
-    await buzz(ctx, 0.5)
 
     if len(ctx.client.devices) == 0:
         ccp.output(f"No devices connected")
@@ -83,6 +82,7 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
         for idx, dev in ctx.client.devices.items():
             ccp.output(f"Connected device {idx}: {dev}")
             ctx.bpenable = True
+        await buzz(ctx, 0.5)
 
 async def bp_trap(ctx: BPIOContext):
     await buzz(ctx, 4.0)
@@ -116,9 +116,6 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
 # Demonstrate a less trivial vibration pattern using "strength,duration" formatted strings
 async def bp_multistr(ctx: BPIOContext):
     await bp_string(ctx, "0.1,0.3 0.2,0.3 0.3,0.3 0.4,0.3 0.5,0.3 0.6,0.3 0.7,0.3 0.8,0.3 0.9,0.3 1.0,0.3")
-
-async def bp_deathlink(ctx: BPIOContext):
-    await bp_multistr(ctx)
 
 class BPIOClientCommandProcessor(ClientCommandProcessor):
     ctx: BPIOContext
