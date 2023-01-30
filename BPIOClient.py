@@ -27,7 +27,7 @@ from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProc
 # - Run BPIOClient.py, connect to your game's room and slot
 # - Run /bp, verify you've connected, run /bptest to test, /bpdc to disconnect
 # - Run /bpstrength to adjust the strength from 0.0 to 1.0 (default 0.5)
-# - Buzz when you receive various items!
+# - Buzz when you send and receive various items!
 
 from buttplug import Client, WebsocketConnector, ProtocolSpec
 
