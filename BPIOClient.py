@@ -103,7 +103,7 @@ async def bpstroke(ctx: BPIOContext):
                     if ctx.bplinmaxsstrokes > 0:
                         ctx.bplinmaxsstrokes -= 1
                     else:
-                        ctx.bplinspeed += 100
+                        ctx.bplinspeed += 50
                         if ctx.bplinspeed > 2000:
                             ctx.bplinspeed = 2000
                      
