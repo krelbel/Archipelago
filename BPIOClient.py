@@ -48,19 +48,29 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True)
     if ctx.bpenable:
         for dev in ctx.client.devices.values():
             for linear_actuator in dev.linear_actuators:
-                
-                #Flip Duration
-                if duration <= 0:
-                    logger.error("Error: Duration can't be equal or less than 0")
-                duration = 3 / duration
-                #if at bottom or going down send to top
-                if ctx.bplinpos == 0:
-                    ctx.bplinpos = 1
-                    await linear_actuator.command(int(duration * 1000), 1)
-                #otherwise send to bottom
-                else:
-                    ctx.bplinpos = 0
-                    await linear_actuator.command(int(duration * 1000), 0)
+                if not ctx.bplinstart:
+                    #Flip Duration
+                    if duration <= 0:
+                        logger.error("Error: Duration can't be equal or less than 0")
+                    duration = 3 / duration
+                    #if at bottom or going down send to top
+                    if ctx.bplinpos == 0:
+                        ctx.bplinpos = 1
+                        await linear_actuator.command(int(duration * 1000), 1)
+                    #otherwise send to bottom
+                    else:
+                        ctx.bplinpos = 0
+                        await linear_actuator.command(int(duration * 1000), 0)
+                elif ctx.bplinstart:
+                    newSpeed = ctx.bplinspeed - int((duration/2)*1000)
+                    if newSpeed < 200:
+                        while newSpeed < 200:
+                            ctx.bplinmaxsstrokes += 1
+                            newSpeed += 200
+                        ctx.bplinspeed = 200
+                    else:
+                        ctx.bplinspeed = newSpeed
+                        
 
         for dev in ctx.client.devices.values():
             for actuator in dev.actuators:
@@ -73,10 +83,30 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True)
     # Only turn vibrations off if we know this isn't part of a sequence of
     # different intensity vibrations, to avoid stuttering
     if not singlebuzz:
+        
         return
 
     await haltbuzz(ctx)
     ctx.bplock.release()
+
+async def bpstroke(ctx: BPIOContext):
+    if ctx.bpenable:
+        while ctx.bplinstart:
+            for dev in ctx.client.devices.values():
+                for linear_actuator in dev.linear_actuators:
+                    if ctx.bplinpos == 0:
+                        ctx.bplinpos = 1
+                    else:
+                        ctx.bplinpos = 0
+                    await linear_actuator.command(ctx.bplinspeed, ctx.bplinpos)
+                    await asyncio.sleep(float(ctx.bplinspeed)/1000)
+                    if ctx.bplinmaxsstrokes > 0:
+                        ctx.bplinmaxsstrokes -= 1
+                    else:
+                        ctx.bplinspeed += 100
+                        if ctx.bplinspeed > 2000:
+                            ctx.bplinspeed = 2000
+                     
 
 async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
     try:
@@ -166,6 +196,18 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
         self.output(f"Reenabling BP queue")
         self.ctx.bpenable = True
 
+    def _cmd_bpsstart(self):
+        """Start linear toy"""
+        self.output(f"Motion Ready!")
+        self.ctx.bplinstart = True
+        asyncio.create_task(bpstroke(self.ctx))
+        
+    def _cmd_bpsstop(self):
+        """Stop linear toy"""
+        self.output(f"Motion Stopped!")
+        self.ctx.bplinstart = False
+        
+
 if __name__ == '__main__':
 
     class BPIOContext(CommonContext):
@@ -180,6 +222,9 @@ if __name__ == '__main__':
         strength = 0.5
         bpenable = False
         bplinpos = 1 #saved linear position 0-bottom 1-top
+        bplinstart = False
+        bplinspeed = 2000
+        bplinmaxsstrokes = 0
 
         async def server_auth(self, password_requested: bool = False):
             if password_requested and not self.password:
