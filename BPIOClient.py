@@ -48,7 +48,19 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True)
     if ctx.bpenable:
         for dev in ctx.client.devices.values():
             for linear_actuator in dev.linear_actuators:
-                linear_actuator(duration * 1000, 0.5)
+                
+                #Flip Duration
+                if duration <= 0:
+                    logger.error("Error: Duration can't be equal or less than 0")
+                duration = 3 / duration
+                #if at bottom or going down send to top
+                if ctx.bplinpos == 0:
+                    ctx.bplinpos = 1
+                    await linear_actuator.command(int(duration * 1000), 1)
+                #otherwise send to bottom
+                else:
+                    ctx.bplinpos = 0
+                    await linear_actuator.command(int(duration * 1000), 0)
 
         for dev in ctx.client.devices.values():
             for actuator in dev.actuators:
@@ -167,6 +179,7 @@ if __name__ == '__main__':
         connector = WebsocketConnector("ws://127.0.0.1:12345", logger=client.logger)
         strength = 0.5
         bpenable = False
+        bplinpos = 1 #saved linear position 0-bottom 1-top
 
         async def server_auth(self, password_requested: bool = False):
             if password_requested and not self.password:
