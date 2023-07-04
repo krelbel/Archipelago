@@ -97,19 +97,19 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
         await buzz(ctx, 0.5)
 
 async def bp_trap(ctx: BPIOContext):
-    await buzz(ctx, 4.0)
+    await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
 
 async def bp_progression(ctx: BPIOContext):
-    await buzz(ctx, 3.0)
+    await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0")
 
 async def bp_useful(ctx: BPIOContext):
-    await buzz(ctx, 2.0)
+    await bp_string(ctx, "1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0")
 
 async def bp_trash(ctx: BPIOContext):
-    await buzz(ctx, 1.0)
+    await bp_string(ctx, "1.0,1.0 0.9,1.0 0.8,1.0 0.7,1.0 0.6,1.0 0.5,1.0 0.4,1.0 0.3,1.0 0.2,1.0 0.1,1.0")
 
 async def bp_location(ctx: BPIOContext):
-    await buzz(ctx, 0.5)
+    await bp_string(ctx, "1.0,0.5")
 
 async def bp_string(ctx: BPIOContext, mcmd: String):
     async with ctx.bplock:
@@ -127,7 +127,7 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
 
 # Demonstrate a less trivial vibration pattern using "strength,duration" formatted strings
 async def bp_multistr(ctx: BPIOContext):
-    await bp_string(ctx, "0.1,0.3 0.2,0.3 0.3,0.3 0.4,0.3 0.5,0.3 0.6,0.3 0.7,0.3 0.8,0.3 0.9,0.3 1.0,0.3")
+    await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
 
 class BPIOClientCommandProcessor(ClientCommandProcessor):
     ctx: BPIOContext
@@ -176,7 +176,7 @@ if __name__ == '__main__':
         want_slot_data = False  # Can't use game specific slot_data
 
         client = Client("BPIO Client", ProtocolSpec.v3)
-        connector = WebsocketConnector("ws://127.0.0.1:12345", logger=client.logger)
+        connector = WebsocketConnector("ws://192.168.1.4:12345", logger=client.logger)
         strength = 0.5
         bpenable = False
         bplinpos = 1 #saved linear position 0-bottom 1-top
