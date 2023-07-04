@@ -97,37 +97,55 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
         await buzz(ctx, 0.5)
 
 async def bp_trap(ctx: BPIOContext):
+    print("starting trap")
     await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
 
 async def bp_progression(ctx: BPIOContext):
+    print("starting prog")
     await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0")
 
 async def bp_useful(ctx: BPIOContext):
+    print("starting useful")
     await bp_string(ctx, "1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0")
 
 async def bp_trash(ctx: BPIOContext):
+    print("starting trash")
     await bp_string(ctx, "1.0,1.0 0.9,1.0 0.8,1.0 0.7,1.0 0.6,1.0 0.5,1.0 0.4,1.0 0.3,1.0 0.2,1.0 0.1,1.0")
 
-async def bp_location(ctx: BPIOContext):
-    await bp_string(ctx, "1.0,0.5")
+# async def bp_location(ctx: BPIOContext):
+#     print("starting location")
+#     await bp_string(ctx, "1.0,0.5")
+
+stop_buzz = False
+loop_once = False
 
 async def bp_string(ctx: BPIOContext, mcmd: String):
     async with ctx.bplock:
-        for subcmd in mcmd.split(' '):
-            splitcmd = subcmd.split(',')
-            strength = splitcmd[0]
-            duration = splitcmd[1]
-            if float(strength) == 0.0:
-                await asyncio.sleep(float(duration))
-            else:
-                ctx.strength = float(strength)
-                await buzz(ctx, float(duration), False)
-
+        global stop_buzz
+        stop_buzz = False
+        while not stop_buzz:
+            for subcmd in mcmd.split(' '):
+                splitcmd = subcmd.split(',')
+                strength = splitcmd[0]
+                duration = splitcmd[1]
+                if float(strength) == 0.0:
+                    await asyncio.sleep(float(duration))
+                else:
+                    ctx.strength = float(strength)
+                    await buzz(ctx, float(duration), False)
+                if stop_buzz:
+                    print("stop buzzing mid loop")
+                    await haltbuzz(ctx)
+                    return
+            if loop_once:
+                await haltbuzz(ctx)
+                return
         await haltbuzz(ctx)
 
 # Demonstrate a less trivial vibration pattern using "strength,duration" formatted strings
 async def bp_multistr(ctx: BPIOContext):
-    await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
+    # await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
+    await bp_string(ctx, "0.1,1.0 0.2,1.0")
 
 class BPIOClientCommandProcessor(ClientCommandProcessor):
     ctx: BPIOContext
@@ -154,6 +172,8 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
     def _cmd_bptest(self):
         """Test BP"""
         self.output(f"Testing BP")
+        global loop_once
+        loop_once = True
         asyncio.create_task(bp_multistr(self.ctx))
 
     def _cmd_bpdisable(self):
@@ -189,10 +209,12 @@ if __name__ == '__main__':
 
         def on_package(self, cmd: str, args: dict):
             # Suppress all events while disabled (to clear queues after spam)
+            global stop_buzz
             if not self.bpenable:
                 pass
 
             elif cmd == 'ReceivedItems':
+                stop_buzz = True
                 for item in args["items"]:
                     if item.flags & 0b001:  # progression item
                         asyncio.create_task(bp_progression(self))
@@ -203,11 +225,12 @@ if __name__ == '__main__':
                     else:  # trash item
                         asyncio.create_task(bp_trash(self))
 
-            elif cmd == "RoomUpdate":
-                if "checked_locations" in args:
-                    checked = set(args["checked_locations"])
-                    for location in checked:
-                        asyncio.create_task(bp_location(self))
+            # elif cmd == "RoomUpdate":
+            #     if "checked_locations" in args:
+            #         stop_buzz = True
+            #         checked = set(args["checked_locations"])
+            #         for location in checked:
+            #             asyncio.create_task(bp_location(self))
 
         def run_gui(self) -> None:
             from kvui import GameManager
