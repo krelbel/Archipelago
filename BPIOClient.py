@@ -4,8 +4,10 @@ import sys
 import asyncio
 import shutil
 import time
+import typing
 
 import ModuleUpdate
+
 ModuleUpdate.update()
 
 import Utils
@@ -31,6 +33,7 @@ from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProc
 
 from buttplug import Client, WebsocketConnector, ProtocolSpec
 
+
 async def haltbuzz(ctx: BPIOContext):
     for dev in ctx.client.devices.values():
         for actuator in dev.actuators:
@@ -38,6 +41,7 @@ async def haltbuzz(ctx: BPIOContext):
         for rotatory_actuator in dev.rotatory_actuators:
             await rotatory_actuator.command(0, True)
     await asyncio.sleep(0.1)
+
 
 async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True):
     if singlebuzz:
@@ -48,16 +52,16 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True)
     if ctx.bpenable:
         for dev in ctx.client.devices.values():
             for linear_actuator in dev.linear_actuators:
-                
-                #Flip Duration
+
+                # Flip Duration
                 if duration <= 0:
                     logger.error("Error: Duration can't be equal or less than 0")
                 duration = 3 / duration
-                #if at bottom or going down send to top
+                # if at bottom or going down send to top
                 if ctx.bplinpos == 0:
                     ctx.bplinpos = 1
                     await linear_actuator.command(int(duration * 1000), 1)
-                #otherwise send to bottom
+                # otherwise send to bottom
                 else:
                     ctx.bplinpos = 0
                     await linear_actuator.command(int(duration * 1000), 0)
@@ -78,6 +82,7 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True)
     await haltbuzz(ctx)
     ctx.bplock.release()
 
+
 async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
     try:
         await ctx.client.connect(ctx.connector)
@@ -96,21 +101,26 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
             ctx.bpenable = True
         await buzz(ctx, 0.5)
 
+
 async def bp_trap(ctx: BPIOContext):
     print("starting trap")
     await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
+
 
 async def bp_progression(ctx: BPIOContext):
     print("starting prog")
     await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0")
 
+
 async def bp_useful(ctx: BPIOContext):
     print("starting useful")
     await bp_string(ctx, "1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0")
 
+
 async def bp_trash(ctx: BPIOContext):
     print("starting trash")
     await bp_string(ctx, "1.0,1.0 0.9,1.0 0.8,1.0 0.7,1.0 0.6,1.0 0.5,1.0 0.4,1.0 0.3,1.0 0.2,1.0 0.1,1.0")
+
 
 # async def bp_location(ctx: BPIOContext):
 #     print("starting location")
@@ -118,6 +128,7 @@ async def bp_trash(ctx: BPIOContext):
 
 stop_buzz = False
 loop_once = False
+
 
 async def bp_string(ctx: BPIOContext, mcmd: String):
     async with ctx.bplock:
@@ -131,7 +142,7 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
                 if float(strength) == 0.0:
                     await asyncio.sleep(float(duration))
                 else:
-                    ctx.strength = float(strength)
+                    ctx.strength = float(strength) * ctx.base_strength
                     await buzz(ctx, float(duration), False)
                 if stop_buzz:
                     print("stop buzzing mid loop")
@@ -142,10 +153,12 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
                 return
         await haltbuzz(ctx)
 
+
 # Demonstrate a less trivial vibration pattern using "strength,duration" formatted strings
 async def bp_multistr(ctx: BPIOContext):
     # await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
     await bp_string(ctx, "0.1,1.0 0.2,1.0")
+
 
 class BPIOClientCommandProcessor(ClientCommandProcessor):
     ctx: BPIOContext
@@ -162,7 +175,7 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
     def _cmd_bpstrength(self, strength: float = 0.5):
         """Set vibration strength"""
         self.output(f"Setting vibration strength to {strength}")
-        self.ctx.strength = float(strength)
+        self.ctx.base_strength = float(strength)
 
     def _cmd_bpdc(self):
         """Disconnect from an Intiface Central server device"""
@@ -186,6 +199,7 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
         self.output(f"Reenabling BP queue")
         self.ctx.bpenable = True
 
+
 if __name__ == '__main__':
 
     class BPIOContext(CommonContext):
@@ -197,9 +211,12 @@ if __name__ == '__main__':
 
         client = Client("BPIO Client", ProtocolSpec.v3)
         connector = WebsocketConnector("ws://192.168.1.4:12345", logger=client.logger)
+        base_strength = 0.5
         strength = 0.5
         bpenable = False
-        bplinpos = 1 #saved linear position 0-bottom 1-top
+        bplinpos = 1  # saved linear position 0-bottom 1-top
+        checked_loc_count: int = 0
+        missing_loc_count: int = 5
 
         async def server_auth(self, password_requested: bool = False):
             if password_requested and not self.password:
@@ -213,6 +230,14 @@ if __name__ == '__main__':
             if not self.bpenable:
                 pass
 
+            elif cmd == 'Connected':
+                BPIOContext.checked_loc_count = len(set(args["checked_locations"]))
+                print(BPIOContext.checked_loc_count, "checked loc count")
+                BPIOContext.missing_loc_count = len(set(args["missing_locations"]))
+                print(BPIOContext.missing_loc_count, "missing loc count")
+                BPIOContext.base_strength = BPIOContext.checked_loc_count / (BPIOContext.checked_loc_count + BPIOContext.missing_loc_count)
+                print(BPIOContext.base_strength, "base strength")
+
             elif cmd == 'ReceivedItems':
                 stop_buzz = True
                 for item in args["items"]:
@@ -225,12 +250,20 @@ if __name__ == '__main__':
                     else:  # trash item
                         asyncio.create_task(bp_trash(self))
 
-            # elif cmd == "RoomUpdate":
-            #     if "checked_locations" in args:
-            #         stop_buzz = True
-            #         checked = set(args["checked_locations"])
-            #         for location in checked:
-            #             asyncio.create_task(bp_location(self))
+            elif cmd == "RoomUpdate":
+                # if "checked_locations" in args:
+                #     stop_buzz = True
+                #     checked = set(args["checked_locations"])
+                #     for location in checked:
+                #         asyncio.create_task(bp_location(self))
+                if "checked_locations" in args:
+                    checked = set(args["checked_locations"])
+                    BPIOContext.checked_loc_count += len(checked)
+                    print(BPIOContext.checked_loc_count, "checked loc count")
+                    BPIOContext.missing_loc_count -= len(checked)
+                    print(BPIOContext.missing_loc_count, "missing loc count")
+                    BPIOContext.base_strength = BPIOContext.checked_loc_count / (BPIOContext.checked_loc_count + BPIOContext.missing_loc_count)
+                    print(BPIOContext.base_strength, "base strength")
 
         def run_gui(self) -> None:
             from kvui import GameManager
@@ -243,6 +276,7 @@ if __name__ == '__main__':
 
             self.ui = BPIOManager(self)
             self.ui_task = asyncio.create_task(self.ui.async_run(), name="UI")
+
 
     async def main(args):
         ctx = BPIOContext(args.connect, args.password)
@@ -277,4 +311,3 @@ if __name__ == '__main__':
 
     asyncio.run(main(args))
     colorama.deinit()
-
