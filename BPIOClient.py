@@ -151,6 +151,12 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
             global loop_once
             loop_once = True
         while not stop_buzz:
+            if ctx.pattern == PatternType.time:
+                ctx.base_strength = ctx.base_strength + .05
+                if change_buzz:
+                    ctx.base_strength = .05
+                    change_buzz = False
+                print(ctx.base_strength, "base strength is that")
             for subcmd in mcmd.split(' '):
                 splitcmd = subcmd.split(',')
                 strength = splitcmd[0]
@@ -169,13 +175,14 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
             if loop_once:
                 await haltbuzz(ctx)
                 return
-            print(ctx.pattern, " current pattern")
-            if ctx.pattern == PatternType.time:
-                ctx.base_strength = ctx.base_strength + .05
-                if change_buzz:
-                    ctx.base_strength = .05
-                    change_buzz = False
-                print(ctx.base_strength, "base strength is that")
+            print(ctx.base_strength, "current strength")
+            print(ctx.pattern, "current pattern")
+            # if ctx.pattern == PatternType.time:
+            #     ctx.base_strength = ctx.base_strength + .05
+            #     if change_buzz:
+            #         ctx.base_strength = .05
+            #         change_buzz = False
+            #     print(ctx.base_strength, "base strength is that")
         await haltbuzz(ctx)
 
 
@@ -251,7 +258,7 @@ if __name__ == '__main__':
         connector = WebsocketConnector("ws://192.168.1.4:12345", logger=client.logger)
         base_strength = 0.5
         strength = 0.5
-        pattern = PatternType.time
+        pattern = PatternType.percent
         bpenable = False
         bplinpos = 1  # saved linear position 0-bottom 1-top
         checked_loc_count: int = 0
