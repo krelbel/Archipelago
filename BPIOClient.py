@@ -1,24 +1,14 @@
 from __future__ import annotations
-import os
-import sys
 import asyncio
-import shutil
-import time
-import typing
-from enum import IntEnum
-
 import ModuleUpdate
+import Utils
+from buttplug import Client, WebsocketConnector, ProtocolSpec
+from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProcessor, CommonContext, server_loop
 
 ModuleUpdate.update()
 
-import Utils
-
 if __name__ == "__main__":
     Utils.init_logging("BPIOClient", exception_logger="Client")
-
-from NetUtils import NetworkItem, ClientStatus
-from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProcessor, \
-    CommonContext, server_loop
 
 # Instructions:
 # - Install and run https://intiface.com/central/
@@ -29,16 +19,12 @@ from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProc
 #   buttplug alongside the rest of the AP clone)
 # - Run BPIOClient.py, connect to your game's room and slot
 # - Run /bp, verify you've connected, run /bptest to test, /bpdc to disconnect
-# - Run /bpstrength to adjust the strength from 0.0 to 1.0 (default 0.5)
-# - Buzz when you send and receive various items!
-
-from buttplug import Client, WebsocketConnector, ProtocolSpec
-
-
-class PatternType(IntEnum):
-    onitem = 1  # buzzes when you get an item, off otherwise
-    percent = 2  # strength increases based on the % of your locations you have checked
-    time = 3  # strength increases the longer you go without sending a check
+# - Buzzes at low strength, which ramps up the longer you have gone without sending a check
+# - The buzz pattern will change based on the classification of the last item you received
+# If you have trouble with keeping your device connected to your computer's bluetooth, consider using
+# the Intiface mobile app instead. Change the "Connector" line in BPIOContext to your phone's local IP
+# You can find your phone's local IP by going to your router's page.
+# You should format it like ws://192.168.1.#:12345, replace the # with your phone's IP number
 
 
 async def haltbuzz(ctx: BPIOContext):
@@ -110,31 +96,22 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
 
 
 async def bp_trap(ctx: BPIOContext):
-    print("starting trap")
-    await bp_string(ctx, "0.1,1.0 0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
+    await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
 
 
 async def bp_progression(ctx: BPIOContext):
-    print("starting prog")
     # await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0")
-    # just the above on repeat for 9.6 seconds, close enough to 10 seconds
-    await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0")
+    # just the above on repeat for 10 seconds, basically. Maybe find a better way to do this?
+    await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.1,0.4")
 
 
 async def bp_useful(ctx: BPIOContext):
-    print("starting useful")
-    await bp_string(ctx, "1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.1,1.0")
+    await bp_string(ctx, "0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.1,1.0")
 
 
 async def bp_trash(ctx: BPIOContext):
-    print("starting trash")
-    await bp_string(ctx, "1.0,1.0 1.0,1.0 0.9,1.0 0.8,1.0 0.7,1.0 0.6,1.0 0.5,1.0 0.4,1.0 0.3,1.0 0.2,1.0 0.1,1.0")
+    await bp_string(ctx, "1.0,1.0 0.9,1.0 0.8,1.0 0.7,1.0 0.6,1.0 0.5,1.0 0.4,1.0 0.3,1.0 0.2,1.0 0.1,1.0")
 
-
-async def bp_location(ctx: BPIOContext):
-    print("starting location")
-    if ctx.pattern == PatternType.onitem:
-        await bp_string(ctx, "1.0,0.5")
 
 stop_buzz = False
 loop_once = False
@@ -146,18 +123,19 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
         global stop_buzz
         global change_buzz
         stop_buzz = False
-        if ctx.pattern == PatternType.onitem:
-            # if you have onitem pattern, it should only loop the pattern one time
-            global loop_once
-            loop_once = True
+
         while not stop_buzz:
-            if ctx.pattern == PatternType.time:
-                ctx.base_strength = ctx.base_strength + .05
-                if change_buzz:
-                    ctx.base_strength = .05
-                    change_buzz = False
-                print(ctx.base_strength, "base strength is that")
+            if change_buzz:
+                # if you did a check, reset the base strength back to .05
+                ctx.base_strength = .05
+                change_buzz = False
+            else:
+                # increase the base strength at the start of each loop
+                ctx.base_strength = ctx.base_strength + .025
+            print(ctx.base_strength, "base strength is that")
+
             for subcmd in mcmd.split(' '):
+                # 0.5,1.0 means a strength of .5 for a duration of 1 second
                 splitcmd = subcmd.split(',')
                 strength = splitcmd[0]
                 duration = splitcmd[1]
@@ -165,24 +143,19 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
                     await asyncio.sleep(float(duration))
                 else:
                     ctx.strength = float(strength) * ctx.base_strength
+                    # breaks on the intiface side of things if strength > 1
                     if ctx.strength > 1:
                         ctx.strength = 1
                     await buzz(ctx, float(duration), False)
+
                 if stop_buzz:
-                    print("stop buzzing mid loop")
+                    # stop vibrating mid-loop, so another loop can replace it when you get an item
                     await haltbuzz(ctx)
                     return
+            # just used for the test vibes
             if loop_once:
                 await haltbuzz(ctx)
                 return
-            print(ctx.base_strength, "current strength")
-            print(ctx.pattern, "current pattern")
-            # if ctx.pattern == PatternType.time:
-            #     ctx.base_strength = ctx.base_strength + .05
-            #     if change_buzz:
-            #         ctx.base_strength = .05
-            #         change_buzz = False
-            #     print(ctx.base_strength, "base strength is that")
         await haltbuzz(ctx)
 
 
@@ -203,22 +176,6 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
         except Exception as e:
             logger.error(f"Error connecting: {e}")
             return
-
-    def _cmd_bppatt(self, pattern: PatternType):
-        """Set desired pattern type.
-        1: Vibrates when an item is received based on what item was received. Inactive otherwise.
-        2: Vibrates constantly, where the strength of the vibration is based on the % of your checks you have sent.
-        3: Vibrates constantly, with strength increasing the longer you take between checks."""
-        self.output(f"Setting vibration type to {pattern}")
-        global stop_buzz
-        stop_buzz = True
-        # self.ctx.pattern = pattern
-        BPIOContext.pattern = pattern
-
-    def _cmd_bpstrength(self, strength: float = 0.5):
-        """Set vibration strength for Pattern Type 1 mode"""
-        self.output(f"Setting vibration strength to {strength}")
-        self.ctx.base_strength = float(strength)
 
     def _cmd_bpdc(self):
         """Disconnect from an Intiface Central server device"""
@@ -255,14 +212,11 @@ if __name__ == '__main__':
         want_slot_data = False  # Can't use game specific slot_data
 
         client = Client("BPIO Client", ProtocolSpec.v3)
-        connector = WebsocketConnector("ws://192.168.1.4:12345", logger=client.logger)
-        base_strength = 0.5
+        connector = WebsocketConnector("ws://127.0.0.1:12345", logger=client.logger)
+        base_strength = 0.025
         strength = 0.5
-        pattern = PatternType.percent
         bpenable = False
         bplinpos = 1  # saved linear position 0-bottom 1-top
-        checked_loc_count: int = 0
-        missing_loc_count: int = 5
 
         async def server_auth(self, password_requested: bool = False):
             if password_requested and not self.password:
@@ -275,18 +229,6 @@ if __name__ == '__main__':
             global stop_buzz
             if not self.bpenable:
                 pass
-
-            elif cmd == 'Connected':
-                BPIOContext.checked_loc_count = len(set(args["checked_locations"]))
-                print(BPIOContext.checked_loc_count, "checked loc count")
-                BPIOContext.missing_loc_count = len(set(args["missing_locations"]))
-                print(BPIOContext.missing_loc_count, "missing loc count")
-                if BPIOContext.pattern == PatternType.percent:
-                    BPIOContext.base_strength = BPIOContext.checked_loc_count / (BPIOContext.checked_loc_count + BPIOContext.missing_loc_count)
-                    print(BPIOContext.base_strength, "base strength")
-                elif BPIOContext.pattern == PatternType.time:
-                    BPIOContext.base_strength = .05
-                # if the type is onitem, then base strength does not get altered by the Connected packet
 
             elif cmd == 'ReceivedItems':
                 print("received items starting")
@@ -302,28 +244,10 @@ if __name__ == '__main__':
                         asyncio.create_task(bp_trash(self))
 
             elif cmd == "RoomUpdate":
-                # if "checked_locations" in args:
-                #     stop_buzz = True
-                #     checked = set(args["checked_locations"])
-                #     for location in checked:
-                #         asyncio.create_task(bp_location(self))
                 if "checked_locations" in args:
-                    print("current pattern type is ", BPIOContext.pattern)
-                    print("checked locations packet")
-                    checked = set(args["checked_locations"])
-                    BPIOContext.checked_loc_count += len(checked)
-                    print(BPIOContext.checked_loc_count, "checked loc count")
-                    BPIOContext.missing_loc_count -= len(checked)
-                    print(BPIOContext.missing_loc_count, "missing loc count")
-
-                    if BPIOContext.pattern == 2:
-                        BPIOContext.base_strength = BPIOContext.checked_loc_count / (BPIOContext.checked_loc_count + BPIOContext.missing_loc_count)
-                        print(BPIOContext.base_strength, "base strength")
-                    elif BPIOContext.pattern == 3:
-                        global change_buzz
-                        change_buzz = True
-                        BPIOContext.base_strength = .05
-                        print("resetting base strength to .05")
+                    global change_buzz
+                    # set this to true so that the current pattern gets interrupted
+                    change_buzz = True
 
         def run_gui(self) -> None:
             from kvui import GameManager
