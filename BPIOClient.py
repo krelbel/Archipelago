@@ -96,44 +96,36 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
 
 
 async def bp_trap(ctx: BPIOContext):
+    ctx.stop_buzz = True
     await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
 
 
 async def bp_progression(ctx: BPIOContext):
     # await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0")
     # just the above on repeat for 10 seconds, basically. Maybe find a better way to do this?
+    ctx.stop_buzz = True
     await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.1,0.4")
 
 
 async def bp_useful(ctx: BPIOContext):
+    ctx.stop_buzz = True
     await bp_string(ctx, "0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.1,1.0")
 
 
 async def bp_trash(ctx: BPIOContext):
+    ctx.stop_buzz = True
     await bp_string(ctx, "1.0,1.0 0.9,1.0 0.8,1.0 0.7,1.0 0.6,1.0 0.5,1.0 0.4,1.0 0.3,1.0 0.2,1.0 0.1,1.0")
 
 
-stop_buzz = False
-loop_once = False
-change_buzz = False
+async def bp_loc(ctx: BPIOContext):
+    ctx.change_buzz = True
 
 
 async def bp_string(ctx: BPIOContext, mcmd: String):
     async with ctx.bplock:
-        global stop_buzz
-        global change_buzz
-        stop_buzz = False
+        ctx.stop_buzz = False
 
-        while not stop_buzz:
-            if change_buzz:
-                # if you did a check, reset the base strength back to .05
-                ctx.base_strength = .05
-                change_buzz = False
-            else:
-                # increase the base strength at the start of each loop
-                ctx.base_strength = ctx.base_strength + .025
-            print(ctx.base_strength, "base strength is that")
-
+        while not ctx.stop_buzz:
             for subcmd in mcmd.split(' '):
                 # 0.5,1.0 means a strength of .5 for a duration of 1 second
                 splitcmd = subcmd.split(',')
@@ -148,12 +140,21 @@ async def bp_string(ctx: BPIOContext, mcmd: String):
                         ctx.strength = 1
                     await buzz(ctx, float(duration), False)
 
-                if stop_buzz:
+                if ctx.change_buzz:
+                    # when you send a location, reset the strength
+                    ctx.base_strength = .025
+                    ctx.change_buzz = False
+                if ctx.stop_buzz:
                     # stop vibrating mid-loop, so another loop can replace it when you get an item
                     await haltbuzz(ctx)
                     return
+
+            # increase the base strength at the end of each loop
+            ctx.base_strength = ctx.base_strength + .025
+            print("base strength is now", ctx.base_strength)
+
             # just used for the test vibes
-            if loop_once:
+            if ctx.loop_once:
                 await haltbuzz(ctx)
                 return
         await haltbuzz(ctx)
@@ -185,15 +186,13 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
     def _cmd_bptest(self):
         """Test BP"""
         self.output(f"Testing BP")
-        global loop_once
-        loop_once = True
+        self.ctx.loop_once = True
         asyncio.create_task(bp_multistr(self.ctx))
 
     def _cmd_bpdisable(self):
         """Temporarily disable BP (for clearing a big queue of events)"""
         self.output(f"Clearing BP queue")
-        global stop_buzz
-        stop_buzz = True
+        self.ctx.stop_buzz = True
         self.ctx.bpenable = False
 
     def _cmd_bpenable(self):
@@ -212,11 +211,14 @@ if __name__ == '__main__':
         want_slot_data = False  # Can't use game specific slot_data
 
         client = Client("BPIO Client", ProtocolSpec.v3)
-        connector = WebsocketConnector("ws://127.0.0.1:12345", logger=client.logger)
+        connector = WebsocketConnector("ws://192.168.1.4:12345", logger=client.logger)
         base_strength = 0.025
         strength = 0.5
         bpenable = False
         bplinpos = 1  # saved linear position 0-bottom 1-top
+        stop_buzz = False
+        loop_once = False
+        change_buzz = False
 
         async def server_auth(self, password_requested: bool = False):
             if password_requested and not self.password:
@@ -226,13 +228,10 @@ if __name__ == '__main__':
 
         def on_package(self, cmd: str, args: dict):
             # Suppress all events while disabled (to clear queues after spam)
-            global stop_buzz
             if not self.bpenable:
                 pass
 
             elif cmd == 'ReceivedItems':
-                print("received items starting")
-                stop_buzz = True
                 for item in args["items"]:
                     if item.flags & 0b001:  # progression item
                         asyncio.create_task(bp_progression(self))
@@ -245,9 +244,8 @@ if __name__ == '__main__':
 
             elif cmd == "RoomUpdate":
                 if "checked_locations" in args:
-                    global change_buzz
                     # set this to true so that the current pattern gets interrupted
-                    change_buzz = True
+                    asyncio.create_task(bp_loc(self))
 
         def run_gui(self) -> None:
             from kvui import GameManager
