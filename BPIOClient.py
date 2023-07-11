@@ -1,21 +1,14 @@
 from __future__ import annotations
-import os
-import sys
 import asyncio
-import shutil
-import time
-
 import ModuleUpdate
-ModuleUpdate.update()
-
 import Utils
+from buttplug import Client, WebsocketConnector, ProtocolSpec
+from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProcessor, CommonContext, server_loop
+
+ModuleUpdate.update()
 
 if __name__ == "__main__":
     Utils.init_logging("BPIOClient", exception_logger="Client")
-
-from NetUtils import NetworkItem, ClientStatus
-from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProcessor, \
-    CommonContext, server_loop
 
 # Instructions:
 # - Install and run https://intiface.com/central/
@@ -26,10 +19,13 @@ from CommonClient import gui_enabled, logger, get_base_parser, ClientCommandProc
 #   buttplug alongside the rest of the AP clone)
 # - Run BPIOClient.py, connect to your game's room and slot
 # - Run /bp, verify you've connected, run /bptest to test, /bpdc to disconnect
-# - Run /bpstrength to adjust the strength from 0.0 to 1.0 (default 0.5)
-# - Buzz when you send and receive various items!
+# - Buzzes at low strength, which ramps up the longer you have gone without sending a check
+# - The buzz pattern will change based on the classification of the last item you received
+# If you have trouble with keeping your device connected to your computer's bluetooth, consider using
+# the Intiface mobile app instead. Change the "Connector" line in BPIOContext to your phone's local IP
+# You can find your phone's local IP by going to your router's page.
+# You should format it like ws://192.168.1.#:12345, replace the # with your phone's IP number
 
-from buttplug import Client, WebsocketConnector, ProtocolSpec
 
 async def haltbuzz(ctx: BPIOContext):
     for dev in ctx.client.devices.values():
@@ -38,6 +34,7 @@ async def haltbuzz(ctx: BPIOContext):
         for rotatory_actuator in dev.rotatory_actuators:
             await rotatory_actuator.command(0, True)
     await asyncio.sleep(0.1)
+
 
 async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True):
     if singlebuzz:
@@ -48,16 +45,16 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True)
     if ctx.bpenable:
         for dev in ctx.client.devices.values():
             for linear_actuator in dev.linear_actuators:
-                
-                #Flip Duration
+
+                # Flip Duration
                 if duration <= 0:
                     logger.error("Error: Duration can't be equal or less than 0")
                 duration = 3 / duration
-                #if at bottom or going down send to top
+                # if at bottom or going down send to top
                 if ctx.bplinpos == 0:
                     ctx.bplinpos = 1
                     await linear_actuator.command(int(duration * 1000), 1)
-                #otherwise send to bottom
+                # otherwise send to bottom
                 else:
                     ctx.bplinpos = 0
                     await linear_actuator.command(int(duration * 1000), 0)
@@ -78,6 +75,7 @@ async def buzz(ctx: BPIOContext, duration: float = 0.5, singlebuzz: bool = True)
     await haltbuzz(ctx)
     ctx.bplock.release()
 
+
 async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
     try:
         await ctx.client.connect(ctx.connector)
@@ -96,38 +94,77 @@ async def bpconnect(ctx: BPIOContext, ccp: BPIOClientCommandProcessor):
             ctx.bpenable = True
         await buzz(ctx, 0.5)
 
+
 async def bp_trap(ctx: BPIOContext):
-    await buzz(ctx, 4.0)
+    ctx.stop_buzz = True
+    await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
+
 
 async def bp_progression(ctx: BPIOContext):
-    await buzz(ctx, 3.0)
+    # await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0")
+    # just the above on repeat for 10 seconds, basically. Maybe find a better way to do this?
+    ctx.stop_buzz = True
+    await bp_string(ctx, "1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.2,0.1 0.1,0.1 1.0,1.0 0.1,0.4")
+
 
 async def bp_useful(ctx: BPIOContext):
-    await buzz(ctx, 2.0)
+    ctx.stop_buzz = True
+    await bp_string(ctx, "0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.2,1.0 0.1,1.0 1.0,1.0 0.1,1.0")
+
 
 async def bp_trash(ctx: BPIOContext):
-    await buzz(ctx, 1.0)
+    ctx.stop_buzz = True
+    await bp_string(ctx, "1.0,1.0 0.9,1.0 0.8,1.0 0.7,1.0 0.6,1.0 0.5,1.0 0.4,1.0 0.3,1.0 0.2,1.0 0.1,1.0")
 
-async def bp_location(ctx: BPIOContext):
-    await buzz(ctx, 0.5)
+
+async def bp_loc(ctx: BPIOContext):
+    ctx.change_buzz = True
+
 
 async def bp_string(ctx: BPIOContext, mcmd: String):
     async with ctx.bplock:
-        for subcmd in mcmd.split(' '):
-            splitcmd = subcmd.split(',')
-            strength = splitcmd[0]
-            duration = splitcmd[1]
-            if float(strength) == 0.0:
-                await asyncio.sleep(float(duration))
-            else:
-                ctx.strength = float(strength)
-                await buzz(ctx, float(duration), False)
+        ctx.stop_buzz = False
 
+        while not ctx.stop_buzz:
+            for subcmd in mcmd.split(' '):
+                # 0.5,1.0 means a strength of .5 for a duration of 1 second
+                splitcmd = subcmd.split(',')
+                strength = splitcmd[0]
+                duration = splitcmd[1]
+                if float(strength) == 0.0:
+                    await asyncio.sleep(float(duration))
+                else:
+                    ctx.strength = float(strength) * ctx.base_strength
+                    # breaks on the intiface side of things if strength > 1
+                    if ctx.strength > 1:
+                        ctx.strength = 1
+                    await buzz(ctx, float(duration), False)
+
+                if ctx.change_buzz:
+                    # when you send a location, reset the strength
+                    ctx.base_strength = .025
+                    ctx.change_buzz = False
+                if ctx.stop_buzz:
+                    # stop vibrating mid-loop, so another loop can replace it when you get an item
+                    await haltbuzz(ctx)
+                    return
+
+            # increase the base strength at the end of each loop
+            ctx.base_strength = ctx.base_strength + .025
+            print("base strength is now", ctx.base_strength)
+
+            # just used for the test vibes
+            if ctx.loop_once:
+                await haltbuzz(ctx)
+                return
         await haltbuzz(ctx)
+
 
 # Demonstrate a less trivial vibration pattern using "strength,duration" formatted strings
 async def bp_multistr(ctx: BPIOContext):
-    await bp_string(ctx, "0.1,0.3 0.2,0.3 0.3,0.3 0.4,0.3 0.5,0.3 0.6,0.3 0.7,0.3 0.8,0.3 0.9,0.3 1.0,0.3")
+    # await bp_string(ctx, "0.1,1.0 0.2,1.0 0.3,1.0 0.4,1.0 0.5,1.0 0.6,1.0 0.7,1.0 0.8,1.0 0.9,1.0 1.0,1.0")
+    await bp_string(ctx, "0.1,1.0 0.2,1.0")
+
 
 class BPIOClientCommandProcessor(ClientCommandProcessor):
     ctx: BPIOContext
@@ -141,11 +178,6 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
             logger.error(f"Error connecting: {e}")
             return
 
-    def _cmd_bpstrength(self, strength: float = 0.5):
-        """Set vibration strength"""
-        self.output(f"Setting vibration strength to {strength}")
-        self.ctx.strength = float(strength)
-
     def _cmd_bpdc(self):
         """Disconnect from an Intiface Central server device"""
         self.output(f"Disconnecting BP")
@@ -154,17 +186,20 @@ class BPIOClientCommandProcessor(ClientCommandProcessor):
     def _cmd_bptest(self):
         """Test BP"""
         self.output(f"Testing BP")
+        self.ctx.loop_once = True
         asyncio.create_task(bp_multistr(self.ctx))
 
     def _cmd_bpdisable(self):
         """Temporarily disable BP (for clearing a big queue of events)"""
         self.output(f"Clearing BP queue")
+        self.ctx.stop_buzz = True
         self.ctx.bpenable = False
 
     def _cmd_bpenable(self):
         """Reenable BP (for clearing a big queue of events)"""
         self.output(f"Reenabling BP queue")
         self.ctx.bpenable = True
+
 
 if __name__ == '__main__':
 
@@ -176,10 +211,14 @@ if __name__ == '__main__':
         want_slot_data = False  # Can't use game specific slot_data
 
         client = Client("BPIO Client", ProtocolSpec.v3)
-        connector = WebsocketConnector("ws://127.0.0.1:12345", logger=client.logger)
+        connector = WebsocketConnector("ws://192.168.1.4:12345", logger=client.logger)
+        base_strength = 0.025
         strength = 0.5
         bpenable = False
-        bplinpos = 1 #saved linear position 0-bottom 1-top
+        bplinpos = 1  # saved linear position 0-bottom 1-top
+        stop_buzz = False
+        loop_once = False
+        change_buzz = False
 
         async def server_auth(self, password_requested: bool = False):
             if password_requested and not self.password:
@@ -205,9 +244,8 @@ if __name__ == '__main__':
 
             elif cmd == "RoomUpdate":
                 if "checked_locations" in args:
-                    checked = set(args["checked_locations"])
-                    for location in checked:
-                        asyncio.create_task(bp_location(self))
+                    # set this to true so that the current pattern gets interrupted
+                    asyncio.create_task(bp_loc(self))
 
         def run_gui(self) -> None:
             from kvui import GameManager
@@ -220,6 +258,7 @@ if __name__ == '__main__':
 
             self.ui = BPIOManager(self)
             self.ui_task = asyncio.create_task(self.ui.async_run(), name="UI")
+
 
     async def main(args):
         ctx = BPIOContext(args.connect, args.password)
@@ -254,4 +293,3 @@ if __name__ == '__main__':
 
     asyncio.run(main(args))
     colorama.deinit()
-
